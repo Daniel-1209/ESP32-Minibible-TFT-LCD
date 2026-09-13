@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 // 1. Configuración de Rutas
-const inputFile = path.join(__dirname, "Jsons", "rvr1960.json");
+const inputFile = path.join(__dirname, "Jsons", "RVR1960-Spanish.json");
 const outputBaseDir = path.join(__dirname, "Bibles-ready");
 
 async function procesarRVR1960() {
