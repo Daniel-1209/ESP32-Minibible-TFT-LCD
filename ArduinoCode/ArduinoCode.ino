@@ -14,11 +14,11 @@ TFT_eSPI tft = TFT_eSPI();
 // =====================================================
 
 // Joystick
-#define JOY_UP     13
-#define JOY_DOWN   12
-#define JOY_LEFT   14
-#define JOY_RIGHT  27
-#define JOY_BTN    26
+#define JOY_UP 13
+#define JOY_DOWN 12
+#define JOY_LEFT 14
+#define JOY_RIGHT 27
+#define JOY_BTN 26
 
 // TFT
 #define TFT_CS_PIN 5
@@ -27,27 +27,47 @@ TFT_eSPI tft = TFT_eSPI();
 #define SD_CS 15
 
 // SPI ESP32
-#define SPI_SCK  18
+#define SPI_SCK 18
 #define SPI_MISO 19
 #define SPI_MOSI 23
 
 // =====================================================
-// RUTAS
+// ARCHIVOS
 // =====================================================
 
 #define JPG_MENU "/img/star.jpg"
-#define TXT_CAPITULO "/RVR1960/1_CORI/1.txt"
+
+// =====================================================
+// CONFIGURACION
+// =====================================================
+
+#define MAX_VERSIONES 10
+#define MAX_LIBROS 80
+#define MAX_CAPITULOS 200
+
+// Historial de páginas
+#define MAX_PAGINAS_HISTORIAL 1000
 
 // =====================================================
 // ESTADOS
 // =====================================================
 
 enum EstadoSistema {
-  MENU,
+  MENU_VERSION,
+  MENU_LIBRO,
+  MENU_CAPITULO,
   LEYENDO
 };
 
-EstadoSistema estadoActual = MENU;
+EstadoSistema estadoActual = MENU_VERSION;
+
+// =====================================================
+// MENU PRINCIPAL
+// =====================================================
+
+// Al arrancar mostramos la pantalla principal.
+// El primer OK solamente entra al menú de versiones.
+bool menuPrincipalActivo = true;
 
 // =====================================================
 // VARIABLES
@@ -60,6 +80,39 @@ uint32_t posicionArchivo = 0;
 unsigned long ultimoTiempo = 0;
 
 // =====================================================
+// HISTORIAL DE PAGINAS
+// =====================================================
+
+uint32_t historialPaginas[MAX_PAGINAS_HISTORIAL];
+
+int paginaActual = 0;
+int paginasGuardadas = 0;
+
+// =====================================================
+// LISTAS
+// =====================================================
+
+String versiones[MAX_VERSIONES];
+int cantidadVersiones = 0;
+int indiceVersion = 0;
+
+String libros[MAX_LIBROS];
+int cantidadLibros = 0;
+int indiceLibro = 0;
+
+String capitulos[MAX_CAPITULOS];
+int cantidadCapitulos = 0;
+int indiceCapitulo = 0;
+
+// =====================================================
+// SELECCION ACTUAL
+// =====================================================
+
+String versionActual = "";
+String libroActual = "";
+String capituloActual = "";
+
+// =====================================================
 // CALLBACK JPEG
 // =====================================================
 
@@ -68,8 +121,8 @@ bool tft_output(
   int16_t y,
   uint16_t w,
   uint16_t h,
-  uint16_t *bitmap
-) {
+  uint16_t *bitmap) {
+
   if (y >= tft.height()) {
     return false;
   }
@@ -85,17 +138,14 @@ bool tft_output(
 
 bool iniciarSD() {
 
-  // TFT desactivada
   pinMode(TFT_CS_PIN, OUTPUT);
   digitalWrite(TFT_CS_PIN, HIGH);
 
-  // SD desactivada
   pinMode(SD_CS, OUTPUT);
   digitalWrite(SD_CS, HIGH);
 
   delay(50);
 
-  // Reiniciar SPI
   SPI.end();
 
   delay(100);
@@ -104,14 +154,12 @@ bool iniciarSD() {
     SPI_SCK,
     SPI_MISO,
     SPI_MOSI,
-    -1
-  );
+    -1);
 
   delay(100);
 
   Serial.println("Inicializando SD...");
 
-  // Velocidad baja para máxima estabilidad
   if (!SD.begin(SD_CS, SPI, 4000000)) {
 
     Serial.println("ERROR: SD.begin() fallo");
@@ -125,248 +173,41 @@ bool iniciarSD() {
 }
 
 // =====================================================
-// COMPROBAR ARCHIVOS
+// MOSTRAR MENU PRINCIPAL
 // =====================================================
 
-void comprobarArchivos() {
+void mostrarMenuPrincipal() {
 
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("COMPROBANDO ARCHIVOS");
-  Serial.println("================================");
-
-  if (SD.exists(JPG_MENU)) {
-
-    Serial.print("JPG OK: ");
-    Serial.println(JPG_MENU);
-
-    File jpg = SD.open(JPG_MENU, FILE_READ);
-
-    if (jpg) {
-      Serial.print("Tamano JPG: ");
-      Serial.print(jpg.size());
-      Serial.println(" bytes");
-
-      jpg.close();
-    }
-
-  } else {
-
-    Serial.print("JPG NO ENCONTRADO: ");
-    Serial.println(JPG_MENU);
-  }
-
-  if (SD.exists(TXT_CAPITULO)) {
-
-    Serial.print("TXT OK: ");
-    Serial.println(TXT_CAPITULO);
-
-    File txt = SD.open(TXT_CAPITULO, FILE_READ);
-
-    if (txt) {
-
-      Serial.print("Tamano TXT: ");
-      Serial.print(txt.size());
-      Serial.println(" bytes");
-
-      txt.close();
-
-    } else {
-
-      Serial.println("ERROR abriendo TXT");
-    }
-
-  } else {
-
-    Serial.print("TXT NO ENCONTRADO: ");
-    Serial.println(TXT_CAPITULO);
-  }
-}
-
-// =====================================================
-// MOSTRAR MENU
-// =====================================================
-
-void mostrarMenu() {
-
-  // Asegurar estado correcto del SPI
   digitalWrite(TFT_CS_PIN, HIGH);
   digitalWrite(SD_CS, HIGH);
 
   tft.fillScreen(TFT_BLACK);
 
-  Serial.println();
-  Serial.println("Cargando imagen del menu...");
+  TJpgDec.setJpgScale(2);
 
-  // Dibujar JPG desde SD
-  bool resultado = TJpgDec.drawSdJpg(
-    0,
-    0,
-    JPG_MENU
-  );
-
-  // Desactivar SD después de leer
-  digitalWrite(SD_CS, HIGH);
-
-  // Desactivar TFT
-  digitalWrite(TFT_CS_PIN, HIGH);
-
-  if (resultado) {
-
-    Serial.println("JPG mostrado correctamente");
-
-  } else {
-
-    Serial.println("ERROR: JPG no encontrado o no se pudo decodificar");
-  }
-
-  // Texto inferior
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(1);
-
-  tft.fillRect(
-    0,
-    105,
-    tft.width(),
-    35,
-    TFT_BLACK
-  );
-
-  tft.setCursor(5, 112);
-  tft.println("OK = Leer");
-
-  tft.setCursor(5, 125);
-  tft.println("LEFT = Menu");
-}
-
-// =====================================================
-// ABRIR CAPITULO
-// =====================================================
-
-void abrirCapitulo(const char *ruta) {
-
-  if (archivoActual) {
-    archivoActual.close();
-  }
-
-  // Asegurar TFT desactivada antes de SD
-  digitalWrite(TFT_CS_PIN, HIGH);
-  digitalWrite(SD_CS, HIGH);
-
-  Serial.println();
-  Serial.print("Abriendo TXT: ");
-  Serial.println(ruta);
-
-  archivoActual = SD.open(
-    ruta,
-    FILE_READ
-  );
-
-  if (!archivoActual) {
-
-    Serial.println("ERROR: No se pudo abrir TXT");
-
-    tft.fillScreen(TFT_BLACK);
-
-    tft.setTextColor(TFT_RED);
-    tft.setTextSize(1);
-
-    tft.setCursor(5, 5);
-    tft.println("Error abriendo TXT");
-
-    tft.setTextColor(TFT_WHITE);
-    tft.setCursor(5, 20);
-    tft.println(ruta);
-
-    return;
-  }
-
-  Serial.println("TXT abierto correctamente");
-
-  Serial.print("Tamano: ");
-  Serial.print(archivoActual.size());
-  Serial.println(" bytes");
-
-  posicionArchivo = 0;
-
-  cargarPagina();
-}
-
-// =====================================================
-// CARGAR PAGINA
-// =====================================================
-
-void cargarPagina() {
-
-  if (!archivoActual) {
-    return;
-  }
-
-  if (!archivoActual.available()) {
-
-    Serial.println("Fin del archivo");
-
-    return;
-  }
-
-  // TFT activa
-  tft.fillScreen(TFT_BLACK);
-
-  tft.setTextColor(TFT_WHITE);
-  tft.setTextSize(1);
-  tft.setCursor(0, 0);
-  tft.setTextWrap(true);
-
-  // SD activa
-  digitalWrite(TFT_CS_PIN, HIGH);
-  digitalWrite(SD_CS, LOW);
-
-  archivoActual.seek(posicionArchivo);
-
-  int lineasImpresas = 0;
-  int charsEnLinea = 0;
-
-  while (
-    archivoActual.available() &&
-    lineasImpresas < 16
-  ) {
-
-    char c = archivoActual.read();
-
-    // Volver a seleccionar TFT para escribir
-    digitalWrite(SD_CS, HIGH);
-    digitalWrite(TFT_CS_PIN, LOW);
-
-    if (c == '\r') {
-      digitalWrite(TFT_CS_PIN, HIGH);
-      continue;
-    }
-
-    tft.print(c);
-
-    digitalWrite(TFT_CS_PIN, HIGH);
-
-    charsEnLinea++;
-
-    if (c == '\n' || charsEnLinea >= 26) {
-
-      lineasImpresas++;
-
-      charsEnLinea = 0;
-    }
-
-    // Volver a seleccionar SD
-    digitalWrite(TFT_CS_PIN, HIGH);
-    digitalWrite(SD_CS, LOW);
-  }
+  TJpgDec.drawSdJpg(
+    40,
+    5,
+    JPG_MENU);
 
   digitalWrite(SD_CS, HIGH);
   digitalWrite(TFT_CS_PIN, HIGH);
 
-  posicionArchivo = archivoActual.position();
+  tft.setTextColor(
+    TFT_WHITE,
+    TFT_BLACK);
 
-  Serial.print("Posicion archivo: ");
-  Serial.println(posicionArchivo);
+  tft.drawCentreString(
+    "BIBLIA",
+    80,
+    78,
+    2);
+
+  tft.drawCentreString(
+    "OK = Comenzar",
+    80,
+    98,
+    1);
 }
 
 // =====================================================
@@ -389,69 +230,1211 @@ bool leerBoton(uint8_t pin) {
 }
 
 // =====================================================
+// REINICIAR HISTORIAL DE PAGINAS
+// =====================================================
+
+void reiniciarHistorialPaginas() {
+
+  paginaActual = 0;
+
+  paginasGuardadas = 1;
+
+  historialPaginas[0] = 0;
+
+  posicionArchivo = 0;
+
+  Serial.println(
+    "Historial de paginas reiniciado");
+}
+
+// =====================================================
+// COMPROBAR SI UNA CARPETA ES PERMITIDA
+// =====================================================
+
+bool carpetaPermitida(String nombre) {
+
+  String nombreComparar = nombre;
+
+  nombreComparar.toLowerCase();
+
+  // ---------------------------------------------------
+  // Carpeta de imagenes
+  // ---------------------------------------------------
+
+  if (nombreComparar == "img") {
+    return false;
+  }
+  if (nombreComparar == "ima") {
+    return false;
+  }
+  if (nombreComparar == "images") {
+    return false;
+  }
+
+  // ---------------------------------------------------
+  // Carpeta creada por Windows
+  // ---------------------------------------------------
+
+  if (nombreComparar == "system volume information") {
+    return false;
+  }
+
+  // ---------------------------------------------------
+  // Carpetas ocultas
+  // ---------------------------------------------------
+
+  if (nombre.length() > 0) {
+
+    if (nombre.charAt(0) == '.') {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// =====================================================
+// BUSCAR VERSIONES
+// =====================================================
+
+void cargarVersiones() {
+
+  cantidadVersiones = 0;
+
+  File root = SD.open("/");
+
+  if (!root) {
+
+    Serial.println(
+      "ERROR abriendo raiz SD");
+
+    return;
+  }
+
+  File entry = root.openNextFile();
+
+  while (
+    entry && cantidadVersiones < MAX_VERSIONES) {
+
+    if (entry.isDirectory()) {
+
+      String nombre = entry.name();
+
+      // ------------------------------------------------
+      // IGNORAR CARPETAS QUE NO SON BIBLIAS
+      // ------------------------------------------------
+
+      if (carpetaPermitida(nombre)) {
+
+        versiones[cantidadVersiones] = nombre;
+
+        Serial.print(
+          "Version encontrada: ");
+
+        Serial.println(nombre);
+
+        cantidadVersiones++;
+      } else {
+
+        Serial.print(
+          "Carpeta ignorada: ");
+
+        Serial.println(nombre);
+      }
+    }
+
+    entry.close();
+
+    entry = root.openNextFile();
+  }
+
+  root.close();
+
+  Serial.print(
+    "Total versiones: ");
+
+  Serial.println(
+    cantidadVersiones);
+}
+
+// =====================================================
+// BUSCAR LIBROS
+// =====================================================
+
+void cargarLibros() {
+
+  cantidadLibros = 0;
+
+  String ruta =
+    "/" + versionActual;
+
+  File carpeta =
+    SD.open(ruta);
+
+  if (!carpeta) {
+
+    Serial.print(
+      "ERROR abriendo version: ");
+
+    Serial.println(ruta);
+
+    return;
+  }
+
+  File entry =
+    carpeta.openNextFile();
+
+  while (
+    entry && cantidadLibros < MAX_LIBROS) {
+
+    if (entry.isDirectory()) {
+
+      String nombre =
+        entry.name();
+
+      // ------------------------------------------------
+      // IGNORAR CARPETAS NO VALIDAS
+      // ------------------------------------------------
+
+      if (carpetaPermitida(nombre)) {
+
+        libros[cantidadLibros] =
+          nombre;
+
+        // Serial.print(
+        //   "Libro encontrado: "
+        // );
+
+        // Serial.println(
+        //   nombre
+        // );
+
+        cantidadLibros++;
+      }
+    }
+
+    entry.close();
+
+    entry =
+      carpeta.openNextFile();
+  }
+
+  carpeta.close();
+
+  // Serial.print(
+  //   "Total libros: "
+  // );
+
+  // Serial.println(
+  //   cantidadLibros
+  // );
+}
+
+// =====================================================
+// BUSCAR CAPITULOS
+// =====================================================
+
+void cargarCapitulos() {
+
+  cantidadCapitulos = 0;
+
+  String ruta =
+    "/" + versionActual + "/" + libroActual;
+
+  File carpeta =
+    SD.open(ruta);
+
+  if (!carpeta) {
+
+    Serial.print(
+      "ERROR abriendo libro: ");
+
+    Serial.println(ruta);
+
+    return;
+  }
+
+  File entry =
+    carpeta.openNextFile();
+
+  while (
+    entry && cantidadCapitulos < MAX_CAPITULOS) {
+
+    if (!entry.isDirectory()) {
+
+      String nombre =
+        entry.name();
+
+      String nombreComparar =
+        nombre;
+
+      nombreComparar.toLowerCase();
+
+      if (
+        nombreComparar.endsWith(".txt")) {
+
+        capitulos[cantidadCapitulos] =
+          nombre;
+
+        Serial.print(
+          "Capitulo encontrado: ");
+
+        Serial.println(nombre);
+
+        cantidadCapitulos++;
+      }
+    }
+
+    entry.close();
+
+    entry =
+      carpeta.openNextFile();
+  }
+
+  carpeta.close();
+
+  Serial.print(
+    "Total capitulos: ");
+
+  Serial.println(
+    cantidadCapitulos);
+}
+
+// =====================================================
+// MOSTRAR LISTA
+// =====================================================
+
+void mostrarLista(
+  String titulo,
+  String lista[],
+  int cantidad,
+  int seleccionado) {
+
+  tft.fillScreen(TFT_BLACK);
+
+  tft.setTextColor(
+    TFT_YELLOW,
+    TFT_BLACK);
+
+  tft.drawCentreString(
+    titulo,
+    80,
+    3,
+    2);
+
+  // ---------------------------------------------------
+  // SIN DATOS
+  // ---------------------------------------------------
+
+  if (cantidad <= 0) {
+
+    tft.setTextColor(
+      TFT_RED,
+      TFT_BLACK);
+
+    tft.drawCentreString(
+      "SIN DATOS",
+      80,
+      60,
+      2);
+
+    return;
+  }
+
+  // ---------------------------------------------------
+  // ASEGURAR INDICE VALIDO
+  // ---------------------------------------------------
+
+  if (seleccionado < 0) {
+    seleccionado = 0;
+  }
+
+  if (seleccionado >= cantidad) {
+    seleccionado = cantidad - 1;
+  }
+
+  // ---------------------------------------------------
+  // CALCULAR VENTANA
+  // ---------------------------------------------------
+
+  int inicio =
+    seleccionado - 3;
+
+  if (inicio < 0) {
+    inicio = 0;
+  }
+
+  int fin =
+    inicio + 7;
+
+  if (fin > cantidad) {
+    fin = cantidad;
+  }
+
+  // ---------------------------------------------------
+  // MOSTRAR ELEMENTOS
+  // ---------------------------------------------------
+
+  for (
+    int i = inicio;
+    i < fin;
+    i++) {
+
+    int y =
+      25 + ((i - inicio) * 14);
+
+    if (i == seleccionado) {
+
+      tft.setTextColor(
+        TFT_BLACK,
+        TFT_WHITE);
+    } else {
+
+      tft.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK);
+    }
+
+    String texto =
+      lista[i];
+
+    if (texto.length() > 20) {
+
+      texto =
+        texto.substring(0, 20);
+    }
+
+    tft.drawCentreString(
+      texto,
+      80,
+      y,
+      1);
+  }
+}
+
+// =====================================================
+// MOSTRAR VERSIONES
+// =====================================================
+
+void mostrarVersiones() {
+
+  mostrarLista(
+    "VERSIONES BIBLICAS",
+    versiones,
+    cantidadVersiones,
+    indiceVersion);
+}
+
+// =====================================================
+// MOSTRAR LIBROS
+// =====================================================
+
+void mostrarLibros() {
+
+  mostrarLista(
+    versionActual,
+    libros,
+    cantidadLibros,
+    indiceLibro);
+}
+
+// =====================================================
+// MOSTRAR CAPITULOS
+// =====================================================
+
+void mostrarCapitulos() {
+
+  mostrarLista(
+    libroActual,
+    capitulos,
+    cantidadCapitulos,
+    indiceCapitulo);
+}
+
+// =====================================================
+// ABRIR CAPITULO
+// =====================================================
+
+void abrirCapitulo() {
+
+  if (archivoActual) {
+    archivoActual.close();
+  }
+
+  String ruta =
+    "/" + versionActual + "/" + libroActual + "/" + capituloActual;
+
+  Serial.println();
+
+  Serial.print(
+    "Abriendo: ");
+
+  Serial.println(ruta);
+
+  digitalWrite(
+    TFT_CS_PIN,
+    HIGH);
+
+  digitalWrite(
+    SD_CS,
+    LOW);
+
+  archivoActual =
+    SD.open(
+      ruta,
+      FILE_READ);
+
+  digitalWrite(
+    SD_CS,
+    HIGH);
+
+  if (!archivoActual) {
+
+    Serial.println(
+      "ERROR: No se pudo abrir TXT");
+
+    tft.fillScreen(
+      TFT_BLACK);
+
+    tft.setTextColor(
+      TFT_RED);
+
+    tft.setCursor(
+      5,
+      5);
+
+    tft.println(
+      "Error abriendo TXT");
+
+    tft.setTextColor(
+      TFT_WHITE);
+
+    tft.setCursor(
+      5,
+      20);
+
+    tft.println(
+      ruta);
+
+    return;
+  }
+
+  Serial.println(
+    "TXT abierto correctamente");
+
+  Serial.print(
+    "Tamano: ");
+
+  Serial.println(
+    archivoActual.size());
+
+  // ---------------------------------------------------
+  // REINICIAR HISTORIAL
+  // ---------------------------------------------------
+
+  reiniciarHistorialPaginas();
+
+  // ---------------------------------------------------
+  // MOSTRAR PRIMERA PAGINA
+  // ---------------------------------------------------
+
+  cargarPagina();
+}
+
+// =====================================================
+// CARGAR PAGINA
+// =====================================================
+
+void cargarPagina() {
+
+  if (!archivoActual) {
+    return;
+  }
+
+  // ---------------------------------------------------
+  // COMPROBAR FINAL DEL ARCHIVO
+  // ---------------------------------------------------
+
+  if (
+    posicionArchivo >= archivoActual.size()) {
+
+    Serial.println(
+      "Fin del archivo");
+
+    return;
+  }
+
+  // ---------------------------------------------------
+  // LIMPIAR PANTALLA
+  // ---------------------------------------------------
+
+  tft.fillScreen(
+    TFT_BLACK);
+
+  tft.setTextColor(
+    TFT_WHITE,
+    TFT_BLACK);
+
+  tft.setTextWrap(false);
+
+  // ---------------------------------------------------
+  // FUENTE
+  // ---------------------------------------------------
+
+  tft.setTextFont(1);
+
+  tft.setTextSize(1);
+
+  // ---------------------------------------------------
+  // CONFIGURACION
+  // ---------------------------------------------------
+
+  int margenX = 5;
+
+  int margenY = 5;
+
+  int interlineado = 12;
+
+  int limiteDerecho = 150;
+
+  int cursorY = margenY;
+
+  tft.setCursor(
+    margenX,
+    cursorY);
+
+  // ---------------------------------------------------
+  // POSICION INICIAL
+  // ---------------------------------------------------
+
+  uint32_t inicioPagina =
+    posicionArchivo;
+
+  Serial.print(
+    "Cargando pagina ");
+
+  Serial.print(
+    paginaActual + 1);
+
+  Serial.print(
+    " desde posicion ");
+
+  Serial.println(
+    inicioPagina);
+
+  // ---------------------------------------------------
+  // SD ACTIVA
+  // ---------------------------------------------------
+
+  digitalWrite(
+    TFT_CS_PIN,
+    HIGH);
+
+  digitalWrite(
+    SD_CS,
+    LOW);
+
+  // ---------------------------------------------------
+  // IR AL INICIO EXACTO
+  // ---------------------------------------------------
+
+  if (
+    !archivoActual.seek(
+      posicionArchivo)) {
+
+    Serial.println(
+      "ERROR: seek inicial fallo");
+
+    digitalWrite(
+      SD_CS,
+      HIGH);
+
+    digitalWrite(
+      TFT_CS_PIN,
+      HIGH);
+
+    return;
+  }
+
+  // ---------------------------------------------------
+  // BUFFER PARA UNA PALABRA
+  // ---------------------------------------------------
+
+  String palabra = "";
+
+  // ===================================================
+  // LEER TEXTO
+  // ===================================================
+
+  while (
+    archivoActual.available()) {
+
+    char c =
+      archivoActual.read();
+
+    // -------------------------------------------------
+    // IGNORAR CR
+    // -------------------------------------------------
+
+    if (c == '\r') {
+      continue;
+    }
+
+    // -------------------------------------------------
+    // NUEVA LINEA
+    // -------------------------------------------------
+
+    if (c == '\n') {
+
+      // -----------------------------------------------
+      // IMPRIMIR PALABRA PENDIENTE
+      // -----------------------------------------------
+
+      if (
+        palabra.length() > 0) {
+
+        digitalWrite(
+          SD_CS,
+          HIGH);
+
+        digitalWrite(
+          TFT_CS_PIN,
+          LOW);
+
+        int anchoPalabra =
+          tft.textWidth(
+            palabra);
+
+        int anchoEspacio =
+          tft.textWidth(" ");
+
+        int posicionX =
+          tft.getCursorX();
+
+        // ---------------------------------------------
+        // SI NO CABE
+        // ---------------------------------------------
+
+        if (
+          posicionX + anchoPalabra > limiteDerecho) {
+
+          cursorY +=
+            interlineado;
+
+          if (
+            cursorY > (128 - interlineado)) {
+
+            digitalWrite(
+              TFT_CS_PIN,
+              HIGH);
+
+            digitalWrite(
+              SD_CS,
+              LOW);
+
+            break;
+          }
+
+          tft.setCursor(
+            margenX,
+            cursorY);
+        }
+
+        // ---------------------------------------------
+        // IMPRIMIR PALABRA COMPLETA
+        // ---------------------------------------------
+
+        tft.print(
+          palabra);
+
+        // ---------------------------------------------
+        // ESPACIO
+        // ---------------------------------------------
+
+        if (
+          tft.getCursorX() + anchoEspacio <= limiteDerecho) {
+
+          tft.print(" ");
+        }
+
+        digitalWrite(
+          TFT_CS_PIN,
+          HIGH);
+
+        digitalWrite(
+          SD_CS,
+          LOW);
+
+        palabra = "";
+      }
+
+      // -----------------------------------------------
+      // SALTO DE LINEA REAL
+      // -----------------------------------------------
+
+      cursorY +=
+        interlineado;
+
+      if (
+        cursorY > (128 - interlineado)) {
+
+        break;
+      }
+
+      digitalWrite(
+        SD_CS,
+        HIGH);
+
+      digitalWrite(
+        TFT_CS_PIN,
+        LOW);
+
+      tft.setCursor(
+        margenX,
+        cursorY);
+
+      digitalWrite(
+        TFT_CS_PIN,
+        HIGH);
+
+      digitalWrite(
+        SD_CS,
+        LOW);
+
+      continue;
+    }
+
+    // -------------------------------------------------
+    // ESPACIO = TERMINO PALABRA
+    // -------------------------------------------------
+
+    if (
+      c == ' ' || c == '\t') {
+
+      if (
+        palabra.length() == 0) {
+
+        continue;
+      }
+
+      digitalWrite(
+        SD_CS,
+        HIGH);
+
+      digitalWrite(
+        TFT_CS_PIN,
+        LOW);
+
+      int anchoPalabra =
+        tft.textWidth(
+          palabra);
+
+      int anchoEspacio =
+        tft.textWidth(" ");
+
+      int posicionX =
+        tft.getCursorX();
+
+      // -----------------------------------------------
+      // LA PALABRA NO CABE
+      // -----------------------------------------------
+
+      if (
+        posicionX + anchoPalabra > limiteDerecho) {
+
+        cursorY +=
+          interlineado;
+
+        if (
+          cursorY > (128 - interlineado)) {
+
+          digitalWrite(
+            TFT_CS_PIN,
+            HIGH);
+
+          digitalWrite(
+            SD_CS,
+            LOW);
+
+          break;
+        }
+
+        tft.setCursor(
+          margenX,
+          cursorY);
+      }
+
+      // -----------------------------------------------
+      // IMPRIMIR PALABRA COMPLETA
+      // -----------------------------------------------
+
+      tft.print(
+        palabra);
+
+      // -----------------------------------------------
+      // ESPACIO
+      // -----------------------------------------------
+
+      if (
+        tft.getCursorX() + anchoEspacio <= limiteDerecho) {
+
+        tft.print(" ");
+      }
+
+      digitalWrite(
+        TFT_CS_PIN,
+        HIGH);
+
+      digitalWrite(
+        SD_CS,
+        LOW);
+
+      palabra = "";
+
+      continue;
+    }
+
+    // -------------------------------------------------
+    // AGREGAR CARACTER
+    // -------------------------------------------------
+
+    palabra += c;
+  }
+
+  // ===================================================
+  // IMPRIMIR ULTIMA PALABRA PENDIENTE
+  // ===================================================
+
+  if (
+    palabra.length() > 0 && cursorY <= (128 - interlineado)) {
+
+    digitalWrite(
+      SD_CS,
+      HIGH);
+
+    digitalWrite(
+      TFT_CS_PIN,
+      LOW);
+
+    int anchoPalabra =
+      tft.textWidth(
+        palabra);
+
+    int posicionX =
+      tft.getCursorX();
+
+    // -------------------------------------------------
+    // SI NO CABE
+    // -------------------------------------------------
+
+    if (
+      posicionX + anchoPalabra > limiteDerecho) {
+
+      cursorY +=
+        interlineado;
+
+      if (
+        cursorY <= (128 - interlineado)) {
+
+        tft.setCursor(
+          margenX,
+          cursorY);
+
+        tft.print(
+          palabra);
+      }
+
+    } else {
+
+      tft.print(
+        palabra);
+    }
+
+    digitalWrite(
+      TFT_CS_PIN,
+      HIGH);
+
+    digitalWrite(
+      SD_CS,
+      LOW);
+  }
+
+  // ===================================================
+  // POSICION FINAL
+  // ===================================================
+
+  uint32_t nuevaPosicion =
+    archivoActual.position();
+
+  // ---------------------------------------------------
+  // DESACTIVAR SD
+  // ---------------------------------------------------
+
+  digitalWrite(
+    SD_CS,
+    HIGH);
+
+  digitalWrite(
+    TFT_CS_PIN,
+    HIGH);
+
+  // ---------------------------------------------------
+  // GUARDAR POSICION
+  // ---------------------------------------------------
+
+  posicionArchivo =
+    nuevaPosicion;
+
+  Serial.print(
+    "Pagina termina en: ");
+
+  Serial.println(
+    posicionArchivo);
+}
+
+// =====================================================
+// PAGINA SIGUIENTE
+// =====================================================
+
+void paginaSiguiente() {
+
+  if (!archivoActual) {
+    return;
+  }
+
+  // ---------------------------------------------------
+  // COMPROBAR FINAL
+  // ---------------------------------------------------
+
+  if (
+    posicionArchivo >= archivoActual.size()) {
+
+    Serial.println(
+      "Fin del capitulo");
+
+    return;
+  }
+
+  // ---------------------------------------------------
+  // AVANZAR PAGINA
+  // ---------------------------------------------------
+
+  paginaActual++;
+
+  // ---------------------------------------------------
+  // GUARDAR POSICION
+  // ---------------------------------------------------
+
+  if (
+    paginaActual >= paginasGuardadas) {
+
+    if (
+      paginasGuardadas < MAX_PAGINAS_HISTORIAL) {
+
+      historialPaginas[paginasGuardadas] =
+        posicionArchivo;
+
+      paginasGuardadas++;
+
+      Serial.print(
+        "Nueva pagina guardada: ");
+
+      Serial.println(
+        paginasGuardadas);
+
+    } else {
+
+      Serial.println(
+        "ADVERTENCIA: historial lleno");
+
+      paginaActual =
+        paginasGuardadas - 1;
+
+      return;
+    }
+  }
+
+  // ---------------------------------------------------
+  // RECUPERAR POSICION
+  // ---------------------------------------------------
+
+  posicionArchivo =
+    historialPaginas[paginaActual];
+
+  Serial.print(
+    "Pagina siguiente: ");
+
+  Serial.println(
+    paginaActual + 1);
+
+  // ---------------------------------------------------
+  // MOSTRAR
+  // ---------------------------------------------------
+
+  cargarPagina();
+}
+
+// =====================================================
+// PAGINA ANTERIOR
+// =====================================================
+
+void paginaAnterior() {
+
+  if (!archivoActual) {
+    return;
+  }
+
+  // ---------------------------------------------------
+  // PRIMERA PAGINA
+  // ---------------------------------------------------
+
+  if (
+    paginaActual <= 0) {
+
+    Serial.println(
+      "Ya estamos en la primera pagina");
+
+    posicionArchivo =
+      historialPaginas[0];
+
+    cargarPagina();
+
+    return;
+  }
+
+  // ---------------------------------------------------
+  // RETROCEDER
+  // ---------------------------------------------------
+
+  paginaActual--;
+
+  // ---------------------------------------------------
+  // RECUPERAR POSICION
+  // ---------------------------------------------------
+
+  posicionArchivo =
+    historialPaginas[paginaActual];
+
+  Serial.print(
+    "Volviendo a pagina: ");
+
+  Serial.println(
+    paginaActual + 1);
+
+  Serial.print(
+    "Posicion exacta: ");
+
+  Serial.println(
+    posicionArchivo);
+
+  // ---------------------------------------------------
+  // MOSTRAR
+  // ---------------------------------------------------
+
+  cargarPagina();
+}
+
+// =====================================================
 // SETUP
 // =====================================================
 
 void setup() {
 
-  Serial.begin(115200);
+  Serial.begin(
+    115200);
 
   delay(1000);
 
   Serial.println();
-  Serial.println("================================");
-  Serial.println(" ESP32 + ST7735 + SD + JOYSTICK");
-  Serial.println("================================");
+
+  Serial.println(
+    "================================");
+
+  Serial.println(
+    " ESP32 BIBLIA");
+
+  Serial.println(
+    "================================");
 
   // ===================================================
   // JOYSTICK
   // ===================================================
 
-  pinMode(JOY_UP, INPUT_PULLUP);
-  pinMode(JOY_DOWN, INPUT_PULLUP);
-  pinMode(JOY_LEFT, INPUT_PULLUP);
-  pinMode(JOY_RIGHT, INPUT_PULLUP);
-  pinMode(JOY_BTN, INPUT_PULLUP);
+  pinMode(
+    JOY_UP,
+    INPUT_PULLUP);
+
+  pinMode(
+    JOY_DOWN,
+    INPUT_PULLUP);
+
+  pinMode(
+    JOY_LEFT,
+    INPUT_PULLUP);
+
+  pinMode(
+    JOY_RIGHT,
+    INPUT_PULLUP);
+
+  pinMode(
+    JOY_BTN,
+    INPUT_PULLUP);
 
   // ===================================================
   // CS
   // ===================================================
 
-  pinMode(TFT_CS_PIN, OUTPUT);
-  digitalWrite(TFT_CS_PIN, HIGH);
+  pinMode(
+    TFT_CS_PIN,
+    OUTPUT);
 
-  pinMode(SD_CS, OUTPUT);
-  digitalWrite(SD_CS, HIGH);
+  digitalWrite(
+    TFT_CS_PIN,
+    HIGH);
+
+  pinMode(
+    SD_CS,
+    OUTPUT);
+
+  digitalWrite(
+    SD_CS,
+    HIGH);
 
   // ===================================================
-  // SPI INICIAL
+  // SPI
   // ===================================================
 
   SPI.begin(
     SPI_SCK,
     SPI_MISO,
     SPI_MOSI,
-    -1
-  );
-
-  delay(100);
+    -1);
 
   // ===================================================
   // TFT
   // ===================================================
 
-  Serial.println("Inicializando TFT...");
+  Serial.println(
+    "Inicializando TFT...");
 
   tft.init();
 
-  tft.setRotation(1);
+  tft.setRotation(
+    1);
 
-  digitalWrite(TFT_CS_PIN, HIGH);
-  digitalWrite(SD_CS, HIGH);
+  digitalWrite(
+    TFT_CS_PIN,
+    HIGH);
 
-  tft.fillScreen(TFT_BLACK);
+  digitalWrite(
+    SD_CS,
+    HIGH);
 
-  Serial.println("TFT OK");
+  tft.fillScreen(
+    TFT_BLACK);
+
+  Serial.println(
+    "TFT OK");
 
   // ===================================================
   // SD
@@ -459,43 +1442,92 @@ void setup() {
 
   if (!iniciarSD()) {
 
-    tft.fillScreen(TFT_BLACK);
+    tft.fillScreen(
+      TFT_BLACK);
 
-    tft.setTextColor(TFT_RED);
-    tft.setTextSize(1);
+    tft.setTextColor(
+      TFT_RED);
 
-    tft.setCursor(5, 5);
-    tft.println("ERROR SD");
+    tft.setCursor(
+      5,
+      5);
 
-    tft.setCursor(5, 20);
-    tft.println("No se pudo iniciar");
+    tft.println(
+      "ERROR SD");
+
+    tft.setCursor(
+      5,
+      20);
+
+    tft.println(
+      "No se pudo iniciar");
 
     while (true) {
+
       delay(1000);
     }
   }
 
   // ===================================================
-  // COMPROBAR ARCHIVOS
-  // ===================================================
-
-  comprobarArchivos();
-
-  // ===================================================
   // JPEG DECODER
   // ===================================================
 
-  TJpgDec.setJpgScale(1);
+  TJpgDec.setJpgScale(
+    1);
 
-  TJpgDec.setSwapBytes(true);
+  TJpgDec.setSwapBytes(
+    true);
 
-  TJpgDec.setCallback(tft_output);
+  TJpgDec.setCallback(
+    tft_output);
 
   // ===================================================
-  // MENU
+  // BUSCAR VERSIONES
   // ===================================================
 
-  mostrarMenu();
+  cargarVersiones();
+
+  if (
+    cantidadVersiones == 0) {
+
+    tft.fillScreen(
+      TFT_BLACK);
+
+    tft.setTextColor(
+      TFT_RED);
+
+    tft.setCursor(
+      5,
+      5);
+
+    tft.println(
+      "No hay versiones");
+
+    tft.setCursor(
+      5,
+      20);
+
+    tft.println(
+      "Revise la SD");
+
+    while (true) {
+
+      delay(1000);
+    }
+  }
+
+  // ===================================================
+  // MENU PRINCIPAL
+  // ===================================================
+
+  menuPrincipalActivo = true;
+
+  estadoActual =
+    MENU_VERSION;
+
+  indiceVersion = 0;
+
+  mostrarMenuPrincipal();
 }
 
 // =====================================================
@@ -505,19 +1537,338 @@ void setup() {
 void loop() {
 
   // ===================================================
-  // MENU
+  // PANTALLA PRINCIPAL
+  // ===================================================
+  //
+  // IMPORTANTE:
+  // El primer OK NO selecciona una version.
+  // Solamente sale de la pantalla inicial y muestra
+  // el menu donde el usuario puede escoger la Biblia.
   // ===================================================
 
-  if (estadoActual == MENU) {
+  if (menuPrincipalActivo) {
 
-    if (leerBoton(JOY_BTN)) {
+    if (
+      leerBoton(JOY_BTN)) {
 
-      Serial.println();
-      Serial.println("BOTON OK");
+      menuPrincipalActivo =
+        false;
 
-      estadoActual = LEYENDO;
+      indiceVersion = 0;
 
-      abrirCapitulo(TXT_CAPITULO);
+      estadoActual =
+        MENU_VERSION;
+
+      mostrarVersiones();
+
+      return;
+    }
+
+    return;
+  }
+
+  // ===================================================
+  // MENU VERSIONES
+  // ===================================================
+
+  if (
+    estadoActual == MENU_VERSION) {
+
+    // -------------------------------------------------
+    // ENTRAR
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_BTN)) {
+
+      if (
+        cantidadVersiones <= 0) {
+
+        mostrarVersiones();
+
+        return;
+      }
+
+      versionActual =
+        versiones[indiceVersion];
+
+      Serial.print(
+        "Version seleccionada: ");
+
+      Serial.println(
+        versionActual);
+
+      indiceLibro = 0;
+
+      cargarLibros();
+
+      estadoActual =
+        MENU_LIBRO;
+
+      mostrarLibros();
+
+      return;
+    }
+
+    // -------------------------------------------------
+    // ABAJO
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_DOWN)) {
+
+      indiceVersion++;
+
+      if (
+        indiceVersion >= cantidadVersiones) {
+
+        indiceVersion = 0;
+      }
+
+      mostrarVersiones();
+
+      return;
+    }
+
+    // -------------------------------------------------
+    // ARRIBA
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_UP)) {
+
+      indiceVersion--;
+
+      if (
+        indiceVersion < 0) {
+
+        indiceVersion =
+          cantidadVersiones - 1;
+      }
+
+      mostrarVersiones();
+
+      return;
+    }
+  }
+
+  // ===================================================
+  // MENU LIBROS
+  // ===================================================
+
+  else if (
+    estadoActual == MENU_LIBRO) {
+
+    // -------------------------------------------------
+    // ENTRAR
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_BTN)) {
+
+      if (
+        cantidadLibros <= 0) {
+
+        mostrarLibros();
+
+        return;
+      }
+
+      libroActual =
+        libros[indiceLibro];
+
+      Serial.print(
+        "Libro seleccionado: ");
+
+      Serial.println(
+        libroActual);
+
+      indiceCapitulo = 0;
+
+      cargarCapitulos();
+
+      estadoActual =
+        MENU_CAPITULO;
+
+      mostrarCapitulos();
+
+      return;
+    }
+
+    // -------------------------------------------------
+    // ABAJO
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_DOWN)) {
+
+      if (
+        cantidadLibros <= 0) {
+
+        return;
+      }
+
+      indiceLibro++;
+
+      if (
+        indiceLibro >= cantidadLibros) {
+
+        indiceLibro = 0;
+      }
+
+      mostrarLibros();
+
+      return;
+    }
+
+    // -------------------------------------------------
+    // ARRIBA
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_UP)) {
+
+      if (
+        cantidadLibros <= 0) {
+
+        return;
+      }
+
+      indiceLibro--;
+
+      if (
+        indiceLibro < 0) {
+
+        indiceLibro =
+          cantidadLibros - 1;
+      }
+
+      mostrarLibros();
+
+      return;
+    }
+
+    // -------------------------------------------------
+    // VOLVER
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_LEFT)) {
+
+      estadoActual =
+        MENU_VERSION;
+
+      mostrarVersiones();
+
+      return;
+    }
+  }
+
+  // ===================================================
+  // MENU CAPITULOS
+  // ===================================================
+
+  else if (
+    estadoActual == MENU_CAPITULO) {
+
+    // -------------------------------------------------
+    // ENTRAR
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_BTN)) {
+
+      if (
+        cantidadCapitulos <= 0) {
+
+        mostrarCapitulos();
+
+        return;
+      }
+
+      capituloActual =
+        capitulos[indiceCapitulo];
+
+      Serial.print(
+        "Capitulo seleccionado: ");
+
+      Serial.println(
+        capituloActual);
+
+      estadoActual =
+        LEYENDO;
+
+      abrirCapitulo();
+
+      return;
+    }
+
+    // -------------------------------------------------
+    // ABAJO
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_DOWN)) {
+
+      if (
+        cantidadCapitulos <= 0) {
+
+        return;
+      }
+
+      indiceCapitulo++;
+
+      if (
+        indiceCapitulo >= cantidadCapitulos) {
+
+        indiceCapitulo = 0;
+      }
+
+      mostrarCapitulos();
+
+      return;
+    }
+
+    // -------------------------------------------------
+    // ARRIBA
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_UP)) {
+
+      if (
+        cantidadCapitulos <= 0) {
+
+        return;
+      }
+
+      indiceCapitulo--;
+
+      if (
+        indiceCapitulo < 0) {
+
+        indiceCapitulo =
+          cantidadCapitulos - 1;
+      }
+
+      mostrarCapitulos();
+
+      return;
+    }
+
+    // -------------------------------------------------
+    // VOLVER
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_LEFT)) {
+
+      estadoActual =
+        MENU_LIBRO;
+
+      mostrarLibros();
+
+      return;
     }
   }
 
@@ -525,38 +1876,85 @@ void loop() {
   // LECTURA
   // ===================================================
 
-  else if (estadoActual == LEYENDO) {
+  else if (
+    estadoActual == LEYENDO) {
 
-    // Pagina siguiente
-    if (leerBoton(JOY_DOWN)) {
+    // -------------------------------------------------
+    // PAGINA SIGUIENTE
+    // -------------------------------------------------
 
-      Serial.println("PAGINA SIGUIENTE");
+    if (
+      leerBoton(JOY_DOWN)) {
 
-      cargarPagina();
+      Serial.println(
+        "PAGINA SIGUIENTE");
+
+      paginaSiguiente();
+
+      return;
     }
 
-    // Pagina anterior
-    if (leerBoton(JOY_UP)) {
+    // -------------------------------------------------
+    // PAGINA ANTERIOR
+    // -------------------------------------------------
 
-      Serial.println("BOTON UP");
+    if (
+      leerBoton(JOY_UP)) {
+
+      Serial.println(
+        "PAGINA ANTERIOR");
+
+      paginaAnterior();
+
+      return;
     }
 
-    // Regresar al menu
-    if (leerBoton(JOY_LEFT)) {
+    // -------------------------------------------------
+    // VOLVER A CAPITULOS
+    // -------------------------------------------------
 
-      Serial.println("VOLVIENDO AL MENU");
+    if (
+      leerBoton(JOY_LEFT)) {
+
+      Serial.println(
+        "VOLVIENDO A CAPITULOS");
 
       if (archivoActual) {
+
         archivoActual.close();
       }
 
-      estadoActual = MENU;
+      estadoActual =
+        MENU_CAPITULO;
 
-      // Reiniciar SD antes de volver a usar JPG
-      digitalWrite(TFT_CS_PIN, HIGH);
-      digitalWrite(SD_CS, HIGH);
+      mostrarCapitulos();
 
-      mostrarMenu();
+      return;
+    }
+
+    // -------------------------------------------------
+    // SIGUIENTE CAPITULO
+    // -------------------------------------------------
+
+    if (
+      leerBoton(JOY_RIGHT)) {
+
+      if (
+        indiceCapitulo < cantidadCapitulos - 1) {
+
+        indiceCapitulo++;
+
+        capituloActual =
+          capitulos[indiceCapitulo];
+
+        abrirCapitulo();
+      } else {
+
+        Serial.println(
+          "Ultimo capitulo");
+      }
+
+      return;
     }
   }
 }
