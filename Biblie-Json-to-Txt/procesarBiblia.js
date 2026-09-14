@@ -29,9 +29,11 @@ async function procesarBiblia() {
     // 2. Iterar sobre los Libros
     let countBooks = 0;
     for (const bookName in bibleData) {
-      // Reemplazamos los espacios por guiones bajos para evitar problemas de lectura en el ESP32
-      // Ej: "1 Chronicles" se convierte en "1_Chronicles"
-      const safeBookName = bookName.replace(/\s+/g, "_");
+      // Reemplazamos los espacios por guiones bajos, convertimos a mayúsculas y cortamos a 6 caracteres
+      const safeBookName = bookName
+        .replace(/\s+/g, "_")
+        .toUpperCase()
+        .slice(0, 6);
       const bookPath = path.join(versionPath, safeBookName);
 
       // Crear la carpeta del libro

@@ -29,7 +29,12 @@ async function procesarRVR1960() {
     // 2. Iterar sobre los Libros
     let countBooks = 0;
     for (const book of bibleData.books) {
-      const safeBookName = book.name.replace(/\s+/g, "_");
+      const safeBookName = book.name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, "_")
+        .toUpperCase()
+        .slice(0, 6);
       const bookPath = path.join(versionPath, safeBookName);
 
       if (!fs.existsSync(bookPath)) {
