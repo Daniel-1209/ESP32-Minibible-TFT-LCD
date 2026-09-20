@@ -38,6 +38,19 @@ TFT_eSPI tft = TFT_eSPI();
 #define JPG_MENU "/img/star.jpg"
 
 // =====================================================
+// CONTROL DE BRILLO TFT
+// =====================================================
+// PNP: Emisor -> 3V3, Colector -> LED/BL, Base -> 1K -> GPIO25.
+// Al ser PNP, LOW en la base enciende el backlight y HIGH lo apaga.
+#define TFT_BL_PIN 25
+#define BRILLO_MIN 0
+#define BRILLO_MAX 255
+#define BRILLO_DEFAULT 180
+#define ARCHIVO_BRILLO "/brillo.txt"
+
+int brilloTFT = BRILLO_DEFAULT;
+
+// =====================================================
 // CONFIGURACION
 // =====================================================
 
@@ -56,6 +69,7 @@ enum EstadoSistema {
   MENU_VERSION,
   MENU_LIBRO,
   MENU_CAPITULO,
+  MENU_BRILLO,
   LEYENDO
 };
 
@@ -173,6 +187,106 @@ bool iniciarSD() {
 }
 
 // =====================================================
+// BRILLO: APLICAR PWM AL PNP
+// =====================================================
+
+void aplicarBrillo() {
+  // En un PNP de lado alto la logica esta invertida:
+  // 0 = transistor totalmente encendido = brillo maximo
+  // 255 = transistor apagado = brillo minimo
+  int pwm = 255 - brilloTFT;
+
+  analogWrite(TFT_BL_PIN, pwm);
+}
+
+void cargarBrillo() {
+  brilloTFT = BRILLO_DEFAULT;
+
+  digitalWrite(SD_CS, LOW);
+  File archivo = SD.open(ARCHIVO_BRILLO, FILE_READ);
+  digitalWrite(SD_CS, HIGH);
+
+  if (archivo) {
+    String valor = archivo.readStringUntil('\n');
+    archivo.close();
+
+    int valorLeido = valor.toInt();
+
+    if (valorLeido >= BRILLO_MIN && valorLeido <= BRILLO_MAX) {
+      brilloTFT = valorLeido;
+    }
+  }
+
+  aplicarBrillo();
+
+  Serial.print("Brillo cargado: ");
+  Serial.println(brilloTFT);
+}
+
+void guardarBrillo() {
+  digitalWrite(TFT_CS_PIN, HIGH);
+  digitalWrite(SD_CS, LOW);
+
+  File archivo = SD.open(ARCHIVO_BRILLO, FILE_WRITE);
+
+  if (archivo) {
+    // Reemplazar el archivo para evitar acumular valores.
+    archivo.close();
+    SD.remove(ARCHIVO_BRILLO);
+
+    archivo = SD.open(ARCHIVO_BRILLO, FILE_WRITE);
+
+    if (archivo) {
+      archivo.println(brilloTFT);
+      archivo.close();
+
+      Serial.print("Brillo guardado: ");
+      Serial.println(brilloTFT);
+    } else {
+      Serial.println("ERROR: no se pudo crear brillo.txt");
+    }
+  } else {
+    Serial.println("ERROR: no se pudo abrir brillo.txt");
+  }
+
+  digitalWrite(SD_CS, HIGH);
+  digitalWrite(TFT_CS_PIN, HIGH);
+}
+
+void mostrarMenuBrillo() {
+  tft.fillScreen(TFT_BLACK);
+
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.drawCentreString("BRILLO", 80, 5, 2);
+
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawCentreString("ARRIBA / ABAJO", 80, 30, 1);
+
+  // Barra de brillo
+  int x = 15;
+  int y = 52;
+  int ancho = 130;
+  int alto = 14;
+
+  tft.drawRect(x, y, ancho, alto, TFT_WHITE);
+
+  int relleno = map(brilloTFT, BRILLO_MIN, BRILLO_MAX, 0, ancho - 2);
+
+  if (relleno > 0) {
+    tft.fillRect(x + 1, y + 1, relleno, alto - 2, TFT_WHITE);
+  }
+
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.drawCentreString(String(brilloTFT) + "/255", 80, 72, 1);
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.drawCentreString("LEFT = Inicio", 80, 92, 1);
+
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawCentreString("OK = Guardar", 80, 108, 1);
+}
+
+// =====================================================
 // MOSTRAR MENU PRINCIPAL
 // =====================================================
 
@@ -198,7 +312,7 @@ void mostrarMenuPrincipal() {
     TFT_BLACK);
 
   tft.drawCentreString(
-    "BIBLIA",
+    "MINI-BIBLIA",
     80,
     78,
     2);
@@ -207,6 +321,12 @@ void mostrarMenuPrincipal() {
     "OK = Comenzar",
     80,
     98,
+    1);
+
+  tft.drawCentreString(
+    "DOWN = Brillo",
+    80,
+    112,
     1);
 }
 
@@ -1381,6 +1501,19 @@ void setup() {
     INPUT_PULLUP);
 
   // ===================================================
+  // CONTROL DEL BACKLIGHT CON PNP
+  // ===================================================
+
+  pinMode(TFT_BL_PIN, OUTPUT);
+
+  // PWM de 8 bits para regular el brillo.
+  analogWriteFrequency(TFT_BL_PIN, 5000);
+  analogWriteResolution(TFT_BL_PIN, 8);
+
+  // Se inicia apagado hasta cargar el valor desde SD.
+  analogWrite(TFT_BL_PIN, 255);
+
+  // ===================================================
   // CS
   // ===================================================
 
@@ -1467,6 +1600,12 @@ void setup() {
       delay(1000);
     }
   }
+
+  // ===================================================
+  // CARGAR BRILLO GUARDADO EN SD
+  // ===================================================
+
+  cargarBrillo();
 
   // ===================================================
   // JPEG DECODER
@@ -1564,7 +1703,83 @@ void loop() {
       return;
     }
 
+    // Desde la pantalla inicial, DOWN abre el ajuste de brillo.
+    if (leerBoton(JOY_DOWN)) {
+
+      menuPrincipalActivo = false;
+      estadoActual = MENU_BRILLO;
+
+      mostrarMenuBrillo();
+
+      return;
+    }
+
     return;
+  }
+
+  // ===================================================
+  // MENU BRILLO
+  // ===================================================
+
+  if (estadoActual == MENU_BRILLO) {
+
+    // Aumentar brillo
+    if (leerBoton(JOY_UP)) {
+
+      brilloTFT += 15;
+
+      if (brilloTFT > BRILLO_MAX) {
+        brilloTFT = BRILLO_MAX;
+      }
+
+      aplicarBrillo();
+      guardarBrillo();
+      mostrarMenuBrillo();
+
+      return;
+    }
+
+    // Disminuir brillo
+    if (leerBoton(JOY_DOWN)) {
+
+      brilloTFT -= 15;
+
+      if (brilloTFT < BRILLO_MIN) {
+        brilloTFT = BRILLO_MIN;
+      }
+
+      aplicarBrillo();
+      guardarBrillo();
+      mostrarMenuBrillo();
+
+      return;
+    }
+
+    // OK tambien guarda y regresa al inicio.
+    if (leerBoton(JOY_BTN)) {
+
+      guardarBrillo();
+
+      menuPrincipalActivo = true;
+      estadoActual = MENU_VERSION;
+
+      mostrarMenuPrincipal();
+
+      return;
+    }
+
+    // LEFT regresa al inicio sin perder el valor ya aplicado.
+    if (leerBoton(JOY_LEFT)) {
+
+      guardarBrillo();
+
+      menuPrincipalActivo = true;
+      estadoActual = MENU_VERSION;
+
+      mostrarMenuPrincipal();
+
+      return;
+    }
   }
 
   // ===================================================
@@ -1647,6 +1862,20 @@ void loop() {
       }
 
       mostrarVersiones();
+
+      return;
+    }
+
+    // -------------------------------------------------
+    // VOLVER A PANTALLA INICIAL
+    // -------------------------------------------------
+
+    if (leerBoton(JOY_LEFT)) {
+
+      menuPrincipalActivo = true;
+      estadoActual = MENU_VERSION;
+
+      mostrarMenuPrincipal();
 
       return;
     }
